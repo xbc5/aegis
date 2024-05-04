@@ -1,0 +1,13 @@
+[Unit]
+Description=Aegis WireGuard connection service
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/scripts/aegis --connect
+ExecStop=/usr/local/scripts/aegis --disconnect
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+

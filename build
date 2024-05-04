@@ -1,0 +1,166 @@
+#!/bin/bash
+
+[[ "$EUID" != "0" ]] && echo "You must run this as root" && exit 1
+
+# PATHS
+ROOT="$(realpath `dirname $0`)"          # this repo
+CONF_D="/usr/local/etc/aegis"
+ARTIFACTS="${ROOT}/artifacts"
+FW_RULES="/rw/config/qubes-firewall.d"
+SYSTEMD_DIR="/usr/lib/systemd/system"
+FEDORA_FLAG="/etc/fedora-release"        # if this file exists; it's fedora
+SCRIPTS="/usr/local/scripts"
+
+# NAMES
+UNIT="aegis"
+SCRIPT="aegis"
+SERVICE="${UNIT}.service"
+FW_SCRIPT="fw.sh"           # becomes /rw/config/qubes-firewall.d/50_aegis
+FW_RULE_NAME="50_aegis"         # name of rule in /rw/config/qubes-firewall.d/
+
+
+function _link_fw_script() {
+  mkdir -vp "$FW_RULES"
+  ln -vfs "${ARTIFACTS}/${FW_SCRIPT}" "${FW_RULES}/${FW_RULE_NAME}"
+}
+
+function _delete_fw_script() {
+  rm -vf "${FW_RULES}/${FW_RULE_NAME}"
+}
+
+function _help() {
+  cat << EOF
+Usage: `basename $0` [COMMAND]
+
+COMMAND
+  i,install    for TemplateVMs, install system dependencies
+               for AppVms, install scripts and rules
+  u,uninstall  for TemplateVMs, ask to uninstall system dependencies
+               for AppVms, uninstall scripts and rules
+
+EOF
+}
+
+# echo an OS identifier; update this when adding support for new templates
+function get_os() {
+  if [[ -f "$FEDORA_FLAG" ]]; then
+    echo "fedora"
+  fi
+}
+
+function this_is() {
+  [[ -e "/run/qubes/this-is-$1" ]] && return 0 || return 1
+}
+
+function _install_deps() {
+  local os="`get_os`"
+  case "$os" in
+    fedora) dnf install -y wireguard-tools;;
+    *) echo "Unknown OS: '$os'"; exit 1;;
+  esac
+}
+
+function _uninstall_deps() {
+  local os="`get_os`"
+  case "$os" in
+    fedora) dnf remove wireguard-tools;;
+    *) echo "Unknown OS: '$os'"; exit 1;;
+  esac
+}
+
+function _create_conf_dirs() {
+  mkdir -vp "${CONF_D}/confs/wg/proton/secure-core"
+}
+
+function _delete_config_dir() {
+  rm -rf "${CONF_D}"
+}
+
+function _install_service() {
+  cp "${ARTIFACTS}/${SERVICE}" "$SYSTEMD_DIR"
+  chown -v root:root "${SYSTEMD_DIR}/${SERVICE}"
+  systemctl daemon-reload
+  systemctl enable "$SERVICE"
+  
+  # create qvm-service unit file 
+  local service_d="/etc/systemd/system/${SERVICE}.d"
+  mkdir -vp  "$service_d"
+  # qvm-service --enable aegis will touch a file called "$UNIT" (e.g. aegis; without .service)
+  echo -e "[Unit]\nConditionPathExists=/var/run/qubes-service/${UNIT}" \
+	  > "${service_d}/30_qubes.conf"
+}
+
+function _uninstall_service() {
+  systemctl stop "$SERVICE"
+  systemctl disable "$SERVICE" || exit 1
+  rm -vf "${SYSTEMD_DIR}/${SERVICE}"
+  systemctl daemon-reload
+  
+  # create qvm-service unit file 
+  local service_d="/etc/systemd/system/${SERVICE}.d"
+  rm -rfv  "$service_d"
+}
+
+function _install_script() {
+  mkdir -vp "$SCRIPTS"
+  cp -v "${ARTIFACTS}/${SCRIPT}" "${SCRIPTS}/${SCRIPT}"
+  chmod +x "${SCRIPTS}/${SCRIPT}"
+  chown root:root "${SCRIPTS}/${SCRIPT}"
+}
+
+function _uninstall_script() {
+  rm -vf "${SCRIPTS}/${SCRIPT}"
+}
+
+function _set_conf_perms() {
+  find "${CONF_D}" -type d -exec chmod -v 700 {} \;
+  find "${CONF_D}" -type f -exec chmod -v 600 {} \;
+  chmod -v 700 "${CONF_D}"
+}
+
+function _confirm() {
+  printf "$1 [y/N]: "
+  read -r answer
+  [[ "${answer^^}" == "Y" ]] && return 0 || return 1
+}
+
+case "$1" in
+  i|install)
+    if this_is "proxyvm"; then
+      echo installing for AppVM..
+      _link_fw_script
+      _create_conf_dirs
+      _install_script
+      _set_conf_perms
+    elif this_is "templatevm"; then
+      echo installing for TemplateVM..
+      _install_deps
+      _install_service
+    else
+      echo unknown VM type, cannot install..
+    fi
+    ;;
+  u|uninstall)
+    if this_is "proxyvm"; then
+      echo uninstalling for AppVM..
+      _delete_fw_script
+      _uninstall_script
+      if _confirm "[WARNING] Delete config dir, and all of your tunnel confs?"; then
+        echo deleting all confs..
+        _delete_config_dir
+      else
+        echo confs preserved
+      fi
+    elif this_is "templatevm"; then
+      echo uninstalling for TemplateVM..
+      _uninstall_deps
+      _uninstall_service
+    else
+      echo unknown VM type, cannot uninstall..
+    fi
+    ;;
+  h|help|-h|--help)
+    _help
+    ;;
+  *) echo "Unknown option: '$1'"; _help;;
+esac

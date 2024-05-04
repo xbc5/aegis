@@ -1,0 +1,15 @@
+#!/bin/bash
+
+CONF_D="/usr/local/etc/aegis"
+CONFS="${CONF_D}/confs/wg/proton/secure-core"
+
+case "$1" in
+  -c|--connect)
+    [[ -e "${CONF_D}/wg0.conf" ]] || ln -s "${CONFS}/ch-cz.conf" "${CONF_D}/wg0.conf"
+    wg-quick up "${CONF_D}/wg0.conf"
+    ;;
+  -d|--disconnect)
+    wg-quick down "${CONF_D}/wg0.conf"
+    rm -f  "${CONF_D}/wg0.conf"
+    ;;
+esac
