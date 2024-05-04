@@ -1,6 +1,9 @@
 # Created by https://www.toptal.com/developers/gitignore/api/Linux,VisualStudioCode,Vim,Python,Emacs
 # Edit at https://www.toptal.com/developers/gitignore?templates=Linux,VisualStudioCode,Vim,Python,Emacs
 
+# telescope
+.git
+
 ### Emacs ###
 # -*- mode: gitignore; -*-
 *~
