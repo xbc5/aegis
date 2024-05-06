@@ -1,6 +1,40 @@
 
 ## Installation
 
+#### Dom0 changes
+
+You may wish to use a `DispVM` setup (I do). This project is designed with that idea in mind:
+
+```sh
+# DispVM template (calling it tun-t)
+qvm-create tun-t \
+  --label red \
+  --property template_for_dispvms True
+qvm-prefs --set tun-t default_dispvm tun-t
+
+# The usable tunnel VM (calling it tun)
+qvm-create tun \
+  --label black \
+  --class DispVM \
+  --property template=tun-t \
+  --property default_dispvm=tun-t \
+  --property provides_network=True
+```
+
+From there you will use `tun` as your `netvm`, or perhaps you will connect a firewall to it and use the firewall as the netvm.
+
+You need to run this against `tun`:
+```sh
+qvm-service -e tun aegis                            # enables the service
+qvm-features tun vm-config.aegis--vmtype 'tunvm'    # prevent the aegis script from running in other VMs
+
+# [OPTIONAL] When the service boots, it selects a random config. Use this RegExp pattern to limit selection.
+# This "filter" also applies to the -r flag, which selects a config at random.
+# Leave it UNSET if unsure; when unset, it does not limit choices.
+qvm-features tun vm-config.aegis--conf-pattern '.*'  # .* is the default
+```
+
+
 #### In the VPN qube
 
 Clone it
@@ -29,23 +63,3 @@ The `i` will install what's appropriate into each qube:
 
 The config directory is `/usr/local/etc/aegis`, and Wireguard configs live under the `confs` directory.
 
-#### Dom0 changes
-
-You need to also (in dom0): `qvm-service -e tun aegis`
-
-You may also wish to use the proxy VM as a disposable VM template (I do); this project is designed with that in mind:
-```sh
-qvm-create tun-t \
-  --label red \
-  --property template_for_dispvms True
-qvm-prefs --set tun-t default_dispvm tun-t
-
-qvm-create tun \
-  --label black \
-  --class DispVM \
-  --property template=tun-t \
-  --property default_dispvm=tun-t \
-  --property provides_network=True
-```
-
-From there you will use tun as your `netvm`, or perhaps you will connect a firewall to it and use the firewall as the netvm.

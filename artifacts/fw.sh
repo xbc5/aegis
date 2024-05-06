@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 
+# Credit for thos code goes to hkbakke: https://github.com/hkbakke/qubes-wireguard/blob/f8a0822d86a90e2860ae510c77abfca273e23b1d/bin/firewall#L1-L22
+
 nft -f - << EOF
 flush chain ip qubes custom-forward
 flush chain ip6 qubes custom-forward

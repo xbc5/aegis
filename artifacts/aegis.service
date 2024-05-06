@@ -4,7 +4,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/scripts/aegis --connect
+ExecStart=/usr/local/scripts/aegis --random
 ExecStop=/usr/local/scripts/aegis --disconnect
 RemainAfterExit=yes
 

@@ -10,6 +10,8 @@ FW_RULES="/rw/config/qubes-firewall.d"
 SYSTEMD_DIR="/usr/lib/systemd/system"
 FEDORA_FLAG="/etc/fedora-release"        # if this file exists; it's fedora
 SCRIPTS="/usr/local/scripts"
+USER_FILE="${CONF_D}/user"
+UNPRIV_USER="user"
 
 # NAMES
 UNIT="aegis"
@@ -81,8 +83,8 @@ function _install_service() {
   chown -v root:root "${SYSTEMD_DIR}/${SERVICE}"
   systemctl daemon-reload
   systemctl enable "$SERVICE"
-  
-  # create qvm-service unit file 
+
+  # create qvm-service unit file
   local service_d="/etc/systemd/system/${SERVICE}.d"
   mkdir -vp  "$service_d"
   # qvm-service --enable aegis will touch a file called "$UNIT" (e.g. aegis; without .service)
@@ -95,8 +97,8 @@ function _uninstall_service() {
   systemctl disable "$SERVICE" || exit 1
   rm -vf "${SYSTEMD_DIR}/${SERVICE}"
   systemctl daemon-reload
-  
-  # create qvm-service unit file 
+
+  # create qvm-service unit file
   local service_d="/etc/systemd/system/${SERVICE}.d"
   rm -rfv  "$service_d"
 }
@@ -124,10 +126,35 @@ function _confirm() {
   [[ "${answer^^}" == "Y" ]] && return 0 || return 1
 }
 
+function _determine_unpriv_user() {
+  if id -u user &>/dev/null; then
+    echo "user" > "${USER_FILE}"
+  else
+    user=`awk -F: '$3 >= 1000 {if (!min || $3 < min) {min = $3; name = $1}} END {print name}' /etc/passwd`
+
+    while true; do
+      printf "Input an unprivileged account with X access [${user}]: "
+      read -r answer
+
+      if [[ -z "$answer" ]]; then
+        local choice="$user"
+      else
+        local choice="$answer"
+      fi
+
+      if _confirm "Confirm '${choice}'?"; then
+        break
+      fi
+    done
+    echo "$choice" > "${USER_FILE}"
+  fi
+}
+
 case "$1" in
   i|install)
     if this_is "proxyvm"; then
       echo installing for AppVM..
+      _determine_unpriv_user
       _link_fw_script
       _create_conf_dirs
       _install_script

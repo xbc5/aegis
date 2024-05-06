@@ -1,15 +1,265 @@
-#!/bin/bash
+#!/bin/env python3
+import subprocess
+import os
+import argparse
+import sys
+import qubesdb
+import re
+from pwd import getpwnam
+from psutil import net_if_addrs
+from pathlib import Path
+from random import choice
+from glob import glob
 
-CONF_D="/usr/local/etc/aegis"
-CONFS="${CONF_D}/confs/wg/proton/secure-core"
 
-case "$1" in
-  -c|--connect)
-    [[ -e "${CONF_D}/wg0.conf" ]] || ln -s "${CONFS}/ch-cz.conf" "${CONF_D}/wg0.conf"
-    wg-quick up "${CONF_D}/wg0.conf"
-    ;;
-  -d|--disconnect)
-    wg-quick down "${CONF_D}/wg0.conf"
-    rm -f  "${CONF_D}/wg0.conf"
-    ;;
-esac
+class AppConf:
+    def __init__(self):
+        self.qdb = qubesdb.QubesDB()
+        self._user = None
+        self._uid = None
+
+    @property
+    def confdir(self):
+        return Path("/usr/local/etc/aegis")
+
+    @property
+    def unpriv_user(self):
+        if not self._user:
+            with open(os.path.join(self.confdir, "user"), 'r') as f:
+                self._user = f.readline().strip()
+        return self._user
+
+    @property
+    def unpriv_uid(self):
+        if not self._uid:
+            self._uid = getpwnam(self.unpriv_user).pw_uid
+        return self._uid
+
+    @property
+    def tunconfs(self):
+        return Path(self.confdir, "confs")
+
+    @property
+    def iface(self):
+        return "wg0"
+
+    @property
+    def tun_conf_path(self):
+        """This always returns the path to the symlink regardless of whether it exists or not."""
+        return Path(self.confdir, f"{self.iface}.conf") # TODO: use tun0.conf
+
+    @property
+    def real_conf_name(self):
+        """Return the name of the file that the symlink points to; or None"""
+        try:
+            return os.path.basename(os.readlink(self.tun_conf_path))
+        except FileNotFoundError:
+            return None
+
+    @property
+    def conf_pattern(self):
+        """The pattern to select a conf in headless mode: defaults to '.+'."""
+        conf = self.qdb.read("/vm-config/aegis--conf-pattern")
+        return ".+" if not conf else conf.decode("utf-8")
+
+    @property
+    def is_tunvm(self):
+        conf = self.qdb.read("/vm-config/aegis--vmtype")
+        return False if not conf else conf.decode("utf-8").lower().strip() == "tunvm"
+
+    @property
+    def hostname(self):
+        p = subprocess.run('hostname', stdout=subprocess.PIPE)
+        return p.stdout.decode("utf8").strip()
+
+
+class Notification:
+    def __init__(self, appconf: AppConf):
+        self.appconf = appconf
+
+    def _cmd(self, level, timeout, summary, body):
+        # to send a message as root one must use this stupid command
+        return f'su -c - {self.appconf.unpriv_user} "DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{self.appconf.unpriv_uid}/bus notify-send -u {level} -t {timeout} \'[{self.appconf.hostname}]: {summary}\' \'{body}\'"'
+
+    def err(self, summary, body=None):
+        subprocess.run(self._cmd("critical", "5000", summary, body), shell=True)
+
+    def info(self, summary, body=None):
+        subprocess.run(self._cmd("normal", "2000", summary, body), shell=True)
+
+
+class TunConf:
+    def __init__(self, appconf: AppConf, notification: Notification):
+        self.appconf = appconf
+
+    def get_confs(self, as_string=False):
+        active = self.real_conf_path
+        # get all confs, except the active one
+        r = [c for c in glob(f"{self.appconf.tunconfs}/**/*.conf", recursive=True) if c != active]
+        return '\n'.join(r) if as_string else r
+
+    def pick(self, random=False):
+        if random:
+            pat = self.appconf.conf_pattern
+            # find a set of confs that match
+            confs = [c for c in self.get_confs() if re.search(pat, c)]
+            if not confs:
+                self.notify.err("Cannot connect", f"No confs found for pattern: '{pat}'")
+                sys.exit(1)
+            return choice(confs)
+
+        # choose a config manually
+        process = subprocess.Popen(
+                ["fzf"],
+                stdout=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                encoding="utf-8",)
+
+        stdout, _ = process.communicate(self.get_confs(as_string=True))
+        chosen = stdout.strip()
+        if not chosen:
+            # don't notify (it's annoying), the user chose nothing, they know what they done
+            sys.exit(1)
+        return chosen
+
+
+    def set_link(self, pth):
+        try:
+            os.remove(self.appconf.tun_conf_path)
+        except FileNotFoundError:
+            pass
+
+        os.symlink(pth, self.appconf.tun_conf_path)
+
+
+    def rm_link(self):
+        try:
+            os.remove(self.appconf.tun_conf_path)
+        except FileNotFoundError:
+            pass
+
+
+    @property
+    def link_exists(self):
+        return os.path.islink(self.appconf.tun_conf_path)
+
+
+    @property
+    def real_conf_path(self):
+        """Return the absolute path of the conf that the symlink points to; or None"""
+        try:
+            os.readlink(self.appconf.tun_conf_path)
+        except FileNotFoundError:
+            return ''
+
+
+
+class Wireguard:
+    def __init__(self, appconf: AppConf, notification: Notification):
+        self.appconf = appconf
+        self.notify = notification
+
+    @property
+    def isup(self):
+        return net_if_addrs().get(self.appconf.iface) is not None
+
+    def connect(self):
+        if self.isup:
+            raise RuntimeError("Disconnect the old Wireguard config first")
+
+        try:
+            subprocess.check_call(["wg-quick", "up", str(self.appconf.tun_conf_path)])
+            self.notify.err("Connected", f"to {self.appconf.real_conf_name}")
+        except subprocess.CalledProcessError:
+            self.notify.err("Failed to connect")
+            sys.exit(1)
+
+    def disconnect(self):
+        if not self.isup:
+            return
+
+        try:
+            subprocess.check_call(["wg-quick", "down", str(self.appconf.tun_conf_path)])
+            self.notify.err("Disconnected", f"from {self.appconf.real_conf_name or 'unknown'}")
+        except subprocess.CalledProcessError:
+            self.notify.err("Failed to disconnect")
+            sys.exit(1)
+
+
+class Aegis:
+    def __init__(self, appconf: AppConf, tunconf: TunConf, wg: Wireguard, notification: Notification):
+        self.appconf = appconf
+        self.notify = notification
+        self.tunconf = tunconf
+        # I will use an abstract class in the future called Conection
+        # I wil use a factory to conditonally creat a connection, based on the config selected
+        self.conn = wg
+
+    def reconnect(self):
+        if not self.tunconf.link_exists:
+            self.notify.err("Reconnection failed", "There is no active config")
+            sys.exit(1)
+
+        if self.conn.isup:
+            self.conn.disconnect()
+
+        self.conn.connect()
+
+    def disconnect(self):
+        if self.conn.isup:
+            self.conn.disconnect() # exits upon error
+        self.tunconf.rm_link() # remove anyway, it is "down"
+
+    def connect(self, random=False):
+        conf = self.tunconf.pick(random)
+        if not conf:
+            sys.exit(0)
+
+        if self.conn.isup:
+            self.conn.disconnect() # exits upon error
+
+        self.tunconf.set_link(conf) # removes the old link too
+        self.conn.connect()
+
+
+def factory():
+    appconf = AppConf()
+    notify = Notification(appconf)
+    tunconf = TunConf(appconf, notify)
+    wireguard = Wireguard(appconf, notify)
+    return Aegis(appconf, tunconf, wireguard, notify), appconf
+
+aegis, appconf = factory()
+
+
+if os.getuid() != 0:
+    print("You must run this as root")
+    sys.exit(1)
+if not appconf.is_tunvm:
+    print("You can only run this in a tunvm. In dom0 run: `qvm-features <qube_name> vm-config.aegis--vmtype tunvm`.")
+    sys.exit(1)
+
+
+parser = argparse.ArgumentParser(prog='aegis')
+conn_group = parser.add_mutually_exclusive_group()
+conn_group.add_argument('-p', '--pick', action="store_true", help='interactively choose a config and connect')
+conn_group.add_argument('-r', '--random', action="store_true", help='chose a random config and connect')
+conn_group.add_argument('-k', '--reconnect', action="store_true", help='restart a connection, or use the connection already set')
+conn_group.add_argument('-d', '--disconnect', action="store_true", help='disconnect')
+args = parser.parse_args()
+
+if args.disconnect:
+    aegis.disconnect()
+    sys.exit(0)
+
+if args.reconnect:
+    aegis.reconnect()
+    sys.exit(0)
+
+if args.random:
+    aegis.connect(random=True)
+    sys.exit(0)
+
+if args.pick:
+    aegis.connect(random=False)
+    sys.exit(0)
