@@ -169,7 +169,7 @@ class Wireguard:
 
         try:
             subprocess.check_call(["wg-quick", "up", str(self.appconf.tun_conf_path)])
-            self.notify.err("Connected", f"to {self.appconf.real_conf_name}")
+            self.notify.info("Connected", f"to {self.appconf.real_conf_name}")
         except subprocess.CalledProcessError:
             self.notify.err("Failed to connect")
             sys.exit(1)
@@ -180,7 +180,7 @@ class Wireguard:
 
         try:
             subprocess.check_call(["wg-quick", "down", str(self.appconf.tun_conf_path)])
-            self.notify.err("Disconnected", f"from {self.appconf.real_conf_name or 'unknown'}")
+            self.notify.info("Disconnected", f"from {self.appconf.real_conf_name or 'unknown'}")
         except subprocess.CalledProcessError:
             self.notify.err("Failed to disconnect")
             sys.exit(1)
