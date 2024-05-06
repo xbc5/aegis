@@ -8,8 +8,9 @@ You may wish to use a `DispVM` setup (I do). This project is designed with that 
 ```sh
 # DispVM template (calling it tun-t)
 qvm-create tun-t \
-  --label red \
-  --property template_for_dispvms True
+  --label purple \
+  --property template_for_dispvms=True
+
 qvm-prefs --set tun-t default_dispvm tun-t
 
 # The usable tunnel VM (calling it tun)
@@ -25,8 +26,11 @@ From there you will use `tun` as your `netvm`, or perhaps you will connect a fir
 
 You need to run this against `tun`:
 ```sh
-qvm-service -e tun aegis                            # enables the service
-qvm-features tun vm-config.aegis--vmtype 'tunvm'    # prevent the aegis script from running in other VMs
+# enable the service: this starts the tunnel at boot
+qvm-service -e tun aegis
+
+# allow the aegis script to run (not seting this means that it won't)
+qvm-features tun vm-config.aegis--vmtype 'tunvm'
 
 # [OPTIONAL] When the service boots, it selects a random config. Use this RegExp pattern to limit selection.
 # This "filter" also applies to the -r flag, which selects a config at random.
@@ -37,30 +41,34 @@ qvm-features tun vm-config.aegis--conf-pattern '.*'  # .* is the default
 
 #### In the tun template (tun-t)
 
-Clone it
-
 ```sh
 git clone https://www.github.com/xbc5/aegis
 ```
 
-There is a build script:
+Use the `build` script that's inside of the repo:
 ```
-./build -h  # help
-./build i   # install
-```
-
-#### In the (primary) template
-
-Now copy the repo to your template, and run:
-```
-./build i
+./build -h
+./build install
 ```
 
-#### What it does
+#### In your TemplateVM
 
-The `i` will install what's appropriate into each qube:
-- template: system deps, and service;
-- tun-t: script, firewall rules, config directory;
+Copy the repo to your `TemplateVM`, and run:
+```
+./build install
+```
 
-The config directory is `/usr/local/etc/aegis`, and Wireguard configs live under the `confs` directory.
+#### What this script does
 
+It will `install` the approproate files and dependencies to that qube:
+- `TemplateVM`: system deps, and service;
+- `tun-t`: the script, firewall rules, and it will create the config directory;
+
+The config directory is `/usr/local/etc/aegis`, and Wireguard configs live under the `confs` directory. You can install your into there. For now there's no enforced directory structure, but that may change in the future: one idea being that Wireguard confs live under `wg`, and eventually (when I get around to supporting it), OpenVPN configs will live under `ovpn`:
+- `/usr/local/etc/aegis/confs/wg/...`
+- `/usr/local/etc/aegis/confs/ovpn/...`
+
+ One piece of advice, use a directory structure to distinguish different classes of config -- this will make fuzzy finding (`-c`) over them much easier, for example:
+- `/usr/local/etc/aegis/confs/wg/proton/secure-core/,,,.conf`
+- `/usr/local/etc/aegis/confs/wg/proton/servers/,,,.conf`
+- `/usr/local/etc/aegis/confs/wg/ivpn/servers/,,,.conf`
