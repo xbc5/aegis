@@ -49,7 +49,7 @@ There is a build script:
 ./build i   # install
 ```
 
-#### In the template
+#### In the (primary) template
 
 Now copy the repo to your template, and run:
 ```
@@ -60,7 +60,7 @@ Now copy the repo to your template, and run:
 
 The `i` will install what's appropriate into each qube:
 - template: system deps, and service;
-- proxy vm: script, firewall rules, config directory;
+- tun-t: script, firewall rules, config directory;
 
 The config directory is `/usr/local/etc/aegis`, and Wireguard configs live under the `confs` directory.
 
