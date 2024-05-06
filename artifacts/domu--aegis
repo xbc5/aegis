@@ -91,6 +91,7 @@ class Notification:
 class TunConf:
     def __init__(self, appconf: AppConf, notification: Notification):
         self.appconf = appconf
+        self.notify = notification
 
     def get_confs(self, as_string=False):
         active = self.real_conf_path

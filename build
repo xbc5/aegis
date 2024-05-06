@@ -9,17 +9,27 @@ ARTIFACTS="${ROOT}/artifacts"
 FW_RULES="/rw/config/qubes-firewall.d"
 SYSTEMD_DIR="/usr/lib/systemd/system"
 FEDORA_FLAG="/etc/fedora-release"        # if this file exists; it's fedora
-SCRIPTS="/usr/local/scripts"
-USER_FILE="${CONF_D}/user"
-UNPRIV_USER="user"
+SCRIPTS="/usr/local/bin"
+USER_FILE="${CONF_D}/user" # no need for this if using QubesDB
+UNPRIV_USER="user" # TODO: use QubesDB /default-user
 
 # NAMES
-UNIT="aegis"
-SCRIPT="aegis"
-SERVICE="${UNIT}.service"
+APP="aegis"
+UNIT="${APP}"               # unit file name without .service
+SCRIPT="${APP}"             # script name for both dom0 and domu
+DOM0_SCRIPT="dom0--${APP}"  # artifacts/dom0--aegis
+DOMU_SCRIPT="domu--${APP}"  # artifacts/domu--aegis
+PROFILE_D="${APP}.sh"
+SERVICE="${UNIT}.service"   # full service name
 FW_SCRIPT="fw.sh"           # becomes /rw/config/qubes-firewall.d/50_aegis
-FW_RULE_NAME="50_aegis"         # name of rule in /rw/config/qubes-firewall.d/
+FW_RULE_NAME="50_${APP}"    # name of rule in /rw/config/qubes-firewall.d/
+TUN_NAME="tun"              # DispVM
+TUN_T_NAME="tun-t"          # DispVM template (if used)
+FEAT_SEARCH_PAT="vm-config.aegis--conf-pattern"  # the pattn of confs to use for --random
 
+PROFILE_D_PATH="/etc/profile.d/$PROFILE_D" # for convenience
+
+trap 'echo "An error occured" >&2' ERR
 
 function _link_fw_script() {
   mkdir -vp "$FW_RULES"
@@ -51,7 +61,11 @@ function get_os() {
 }
 
 function this_is() {
-  [[ -e "/run/qubes/this-is-$1" ]] && return 0 || return 1
+  case "$1" in
+    tunvm) [[ "`qubesdb-read /vm-config/aegis--vmtype`" == "tunvm" ]] && return 0 || return 1;;
+    proxyvm|templatevm) [[ -e "/run/qubes/this-is-$1" ]] && return 0 || return 1;;
+    dom0) [[ `hostname` == "dom0" ]] && return 0 || return 1;;
+  esac
 }
 
 function _install_deps() {
@@ -79,8 +93,13 @@ function _delete_config_dir() {
 }
 
 function _install_service() {
-  cp "${ARTIFACTS}/${SERVICE}" "$SYSTEMD_DIR"
-  chown -v root:root "${SYSTEMD_DIR}/${SERVICE}"
+  local src="${ARTIFACTS}/${SERVICE}"
+  local dst="${SYSTEMD_DIR}/${SERVICE}"
+  sed -e "s|<<APP_NAME>>|${APP^}|g" \
+      -e "s|<<SCRIPT_PATH>>|${SCRIPTS}/${SCRIPT}|g" \
+      "$src" > "$dst"
+
+  chown -v root:root "$dst"
   systemctl daemon-reload
   systemctl enable "$SERVICE"
 
@@ -89,7 +108,7 @@ function _install_service() {
   mkdir -vp  "$service_d"
   # qvm-service --enable aegis will touch a file called "$UNIT" (e.g. aegis; without .service)
   echo -e "[Unit]\nConditionPathExists=/var/run/qubes-service/${UNIT}" \
-	  > "${service_d}/30_qubes.conf"
+	  > "${service_d}/30_${UNIT}.conf"
 }
 
 function _uninstall_service() {
@@ -103,14 +122,16 @@ function _uninstall_service() {
   rm -rfv  "$service_d"
 }
 
-function _install_script() {
+function _install_domu_script() {
+  local src="${ARTIFACTS}/${DOMU_SCRIPT}"
+  local dst="${SCRIPTS}/${SCRIPT}"
   mkdir -vp "$SCRIPTS"
-  cp -v "${ARTIFACTS}/${SCRIPT}" "${SCRIPTS}/${SCRIPT}"
-  chmod +x "${SCRIPTS}/${SCRIPT}"
-  chown root:root "${SCRIPTS}/${SCRIPT}"
+  cp -v "$src" "$dst"
+  chmod +x "$dst"
+  chown root:root "$dst"
 }
 
-function _uninstall_script() {
+function _uninstall_domu_script() {
   rm -vf "${SCRIPTS}/${SCRIPT}"
 }
 
@@ -150,28 +171,143 @@ function _determine_unpriv_user() {
   fi
 }
 
+function _read_tun_name() {
+  grep "TUN_NAME" "$PROFILE_D_PATH" | cut -d'=' -f2 | tr -d '"' | tr -d "[:space:]"
+}
+
+function _create_profile_d() {
+  # it already exists, verify or modify it
+  if [[ -f "$PROFILE_D_PATH" ]]; then
+    while true; do
+      echo ""
+      cat "$PROFILE_D_PATH"
+      echo ""
+      if _confirm "Is this config correct?"; then
+        TUN_NAME="`_read_tun_name`"
+        return 0
+      fi
+      sudo "${EDITOR:-vi}" "$PROFILE_D_PATH"
+    done
+  fi
+
+  # it doesn't exist, let's go through it
+  while true; do
+    printf "Specify qube name [tun]: "
+    read -r answer
+
+    local tun_name="${answer:-tun}"
+    tun_name=$(echo "$tun_name" | tr -d '"' | tr -d "[:space:]")
+
+    if _confirm "Confirm '${tun_name}'?"; then
+      break
+    fi
+  done
+
+  TUN_NAME="$tun_name"
+  TUN_T_NAME="${tun_name}-t"
+  local f="$PROFILE_D_PATH"
+  echo "TUN_NAME=\"${TUN_NAME}\"" > "$f" && echo "$f created"
+  chmod -v 644 "$f"
+  chown -v root:root "$f"
+}
+
+function _remove_profile_d() {
+  rm -vf "$PROFILE_D_PATH"
+}
+
+function _create_qubes() {
+  if ! _confirm "Create qubes?"; then
+    return 0
+  fi
+
+  if _confirm "Use DispVM setup?"; then
+    while true; do
+      # TUN_NAME is /always/ set in _create_profile_d(); it will use the users
+      # chosen value, if it's already set in the profile.d file.
+      local default_tun_name="${TUN_NAME:-tun}-t"
+      printf "Specify DispVM template name [${default_tun_name}]: "
+      read -r answer
+
+      local choice="${answer:-$default_tun_name}"
+      choice=$(echo "$choice" | tr -d '"' | tr -d "[:space:]")
+
+      if _confirm "Confirm '${choice}'?"; then
+        TUN_T_NAME="$choice"
+        break
+      fi
+    done
+
+    set -e
+
+    qvm-create "${TUN_T_NAME}" \
+      --label black \
+      --property template_for_dispvms=True
+
+    qvm-prefs --set "${TUN_T_NAME}" default_dispvm "$TUN_T_NAME"
+    qvm-features "$TUN_T_NAME" vm-config.aegis--vmtype 'tunvm' || exit 1
+
+    qvm-create "$TUN_NAME" \
+      --label purple \
+      --class DispVM \
+      --property template="${TUN_T_NAME}" \
+      --property default_dispvm="${TUN_T_NAME}" \
+      --property provides_network=True
+
+    set +e
+
+  else
+    qvm-create "$TUN_NAME" \
+      --label purple \
+      --property provides_network=True \
+      || exit 1
+  fi
+
+  qvm-service -e "$TUN_NAME" aegis || exit 1
+  qvm-features "$TUN_NAME" vm-config.aegis--vmtype 'tunvm' || exit 1
+}
+
+function _install_dom0_script() {
+  local trg="${SCRIPTS}/${SCRIPT}"
+  mkdir -vp "$SCRIPTS"
+  sed -e "s|<<REMOTE_SCRIPT>>|${SCRIPTS}/${SCRIPT}|g" \
+      -e "s|<<PROFILE_D_PATH>>|${PROFILE_D_PATH}|g" \
+      -e "s|<<FEAT_SEARCH_PAT>>|${FEAT_SEARCH_PAT}|g" \
+      "${ARTIFACTS}/${DOM0_SCRIPT}" > "$trg" || exit 1
+  chmod -v 755 "$trg"
+  chown -v root:root "$trg"
+}
+
+function _uninstall_dom0_script() {
+  rm -f "${SCRIPTS}/${SCRIPT}"
+}
+
 case "$1" in
   i|install)
-    if this_is "proxyvm"; then
+    if this_is "tunvm"; then
       echo installing for AppVM..
       _determine_unpriv_user
       _link_fw_script
       _create_conf_dirs
-      _install_script
+      _install_domu_script
       _set_conf_perms
     elif this_is "templatevm"; then
       echo installing for TemplateVM..
       _install_deps
       _install_service
+    elif this_is "dom0"; then
+      echo installing for Dom0..
+      _create_profile_d
+      _create_qubes
+      _install_dom0_script
     else
       echo unknown VM type, cannot install..
     fi
     ;;
   u|uninstall)
-    if this_is "proxyvm"; then
+    if this_is "tunvm"; then
       echo uninstalling for AppVM..
       _delete_fw_script
-      _uninstall_script
+      _uninstall_domu_script
       if _confirm "[WARNING] Delete config dir, and all of your tunnel confs?"; then
         echo deleting all confs..
         _delete_config_dir
@@ -182,6 +318,11 @@ case "$1" in
       echo uninstalling for TemplateVM..
       _uninstall_deps
       _uninstall_service
+    elif this_is "dom0"; then
+      echo uninstalling for Dom0..
+      _remove_profile_d
+      _uninstall_dom0_script
+      echo "Remove the tun qubes yourself"
     else
       echo unknown VM type, cannot uninstall..
     fi

@@ -1,0 +1,108 @@
+#!/bin/bash
+
+set -e
+
+# Modified by the installer
+REMOTE_SCRIPT="<<REMOTE_SCRIPT>>"
+PROFILE_D="<<PROFILE_D_PATH>>"
+FEAT_SEARCH_PAT="<<FEAT_SEARCH_PAT>>" # the feature name to hold the search pattern
+
+EDITOR="${EDITOR:-vi}"
+
+if [[ -z "$TUN_NAME" ]]; then
+  if [[ -f "$PROFILE_D" ]]; then
+    source "$PROFILE_D"
+  else
+    echo "[ERROR] profile.d missing: you must run the installer first" && exit 1
+  fi
+fi
+TERM_EXEC=${TERM_EXEC:-'xterm -e'} # default xterm
+
+function _unset_search_pattern() {
+  qvm-features --unset "$TUN_NAME" "$FEAT_SEARCH_PAT" \
+    && echo "Pattern unset for '${TUN_NAME}'"
+}
+
+function _echo_search_pattern() {
+  qvm-features "$TUN_NAME" "$FEAT_SEARCH_PAT" \
+    || echo "No pattern set for '${TUN_NAME}'"
+}
+
+# Open search pattern in an editor for easy editing
+function _set_search_pattern() {
+  local curr=$(qvm-features "$TUN_NAME" "$FEAT_SEARCH_PAT") # get current value
+
+  # edit it via an editor
+  f=$(mktemp)
+  echo "$curr" > "$f"
+  "${EDITOR}" "$f"
+  local new=$(cat "$f")
+  rm -f "$f"
+
+  [[ -z "$new" ]] && _unset_search_pattern && return 1
+
+  qvm-features "$TUN_NAME" "$FEAT_SEARCH_PAT" "$new" # set it
+  echo -n "Pattern set: "
+  qvm-features "$TUN_NAME" "$FEAT_SEARCH_PAT" # echo the pattern
+}
+
+function _help() {
+  cat <<EOF
+Usage: `basename $0` COMMAND [QUBE]
+
+COMMAND
+  c,connect,-c,--connect              pick a config and connect
+  d,disconnect,-d,--disconnect        disconnect from the tunnel
+  r,random,-r,--random                choose a random config and connect
+  k,reconnect,-k,--reconnect          stop and start the current tunnel
+  p,pattern,-p,--pattern              edit the config search pattern with '${EDITOR}'
+  i,inspect-pattern,                  view the current pattern
+    -i,--inspect-pattern
+  e,edit,-e,--edit                    edit '$PROFILE_D' with '${EDITOR}'
+  h,help,-h,--help                    show this help menu
+
+QUBE
+  optionally provide a qube name; run commands against the QUBE
+  instead of '$TUN_NAME'.
+
+NOTES
+The relevant variables for '${PROFILE_D}':
+
+  \$TERM_EXEC
+  ===========
+  This is the terminal to launch the fuzzy conf picker.
+  Provide the command prefix -- e.g. TERM_EXEC="kitty bash -c"
+  or TERM_EXEC="xterm -e" (the default). This script will inject
+  the command: e.g. "xterm -e '<injected command>'".
+
+  \$TUN_NAME
+  ==========
+  This is the name of the qube which this script runs commands against.
+
+EOF
+}
+
+# use qube param if specified, otherwise use tun name
+QUBE="$TUN_NAME"
+[[ -n "$2" ]] && QUBE="$2"
+
+function _exec() {
+  local CMD="$1"
+  case "$CMD" in
+    -p|--pick) qvm-run -u root "$QUBE" "$TERM_EXEC '$REMOTE_SCRIPT $CMD'";; # launch term
+    *) qvm-run -u root "$QUBE" "$REMOTE_SCRIPT $CMD";; # no term
+  esac
+}
+
+case "$1" in
+  c|connect|-c|--connect)  _exec "--pick";;
+  d|disconnect|-d|--disconnect) _exec "--disconnect";;
+  r|random|-r|--random) _exec "--random";;
+  k|reconnect|-k|--reconnect) _exec "--reconnect";;
+  p|pattern|-p|--pattern) _set_search_pattern;;
+  i|inspect-pattern|-i|--inspect-pattern) _echo_search_pattern;;
+  u|unset-pattern|-u|--unset-pattern) _unset_search_pattern;;
+  e|edit|-e|--edit) sudo "$EDITOR" "$PROFILE_D";;
+  h|help|-h|--help) _help;;
+  *) echo -e "Unknown command '$1'\n"; _help;;
+esac
