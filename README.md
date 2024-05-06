@@ -35,9 +35,10 @@ qvm-features tun vm-config.aegis--conf-pattern '.*'  # .* is the default
 ```
 
 
-#### In the VPN qube
+#### In the tun template (tun-t)
 
 Clone it
+
 ```sh
 git clone https://www.github.com/xbc5/aegis
 ```
