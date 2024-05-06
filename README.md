@@ -60,15 +60,15 @@ Copy the repo to your `TemplateVM`, and run:
 
 #### What this script does
 
-It will `install` the approproate files and dependencies to that qube:
+It will `install` the appropriate files and dependencies into that qube:
 - `TemplateVM`: system deps, and service;
 - `tun-t`: the script, firewall rules, and it will create the config directory;
 
-The config directory is `/usr/local/etc/aegis`, and Wireguard configs live under the `confs` directory. You can install your into there. For now there's no enforced directory structure, but that may change in the future: one idea being that Wireguard confs live under `wg`, and eventually (when I get around to supporting it), OpenVPN configs will live under `ovpn`:
+The config directory is `/usr/local/etc/aegis`, and the Wireguard configs live under the `confs` directory. You can install your own configs into there. For now, there's no enforced directory structure, but that may change in the future: one idea that I have is for Wireguard confs to live under `wg`, and eventually (when I get around to supporting it), OpenVPN configs will live under `ovpn`:
 - `/usr/local/etc/aegis/confs/wg/...`
 - `/usr/local/etc/aegis/confs/ovpn/...`
 
- One piece of advice, use a directory structure to distinguish different classes of config -- this will make fuzzy finding (`-c`) over them much easier, for example:
+ One piece of advice: use a directory structure to distinguish the different classes of your configs -- this will make fuzzy finding (`-c`) over them much easier.. for example:
 - `/usr/local/etc/aegis/confs/wg/proton/secure-core/,,,.conf`
 - `/usr/local/etc/aegis/confs/wg/proton/servers/,,,.conf`
 - `/usr/local/etc/aegis/confs/wg/ivpn/servers/,,,.conf`
