@@ -139,7 +139,7 @@ FEAT_SEARCH_PAT="<<FEAT_SEARCH_PAT>>"  # vm-config.aegis--conf-pattern
 Becomes:
 ```sh
 REMOTE_SCRIPT="/usr/local/bin"
-PROFILE_D="/usr/profile.d/aegis.sh"
+PROFILE_D="/etc/profile.d/aegis.sh"
 FEAT_SEARCH_PAT="vm-config.aegis--conf-pattern"
 ```
 
