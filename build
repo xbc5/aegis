@@ -285,9 +285,9 @@ case "$1" in
   i|install)
     if this_is "tunvm"; then
       echo installing for AppVM..
+      _create_conf_dirs # creates /usr/local/etc/aegis, so do this first
       _determine_unpriv_user
       _link_fw_script
-      _create_conf_dirs
       _install_domu_script
       _set_conf_perms
     elif this_is "templatevm"; then
