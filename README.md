@@ -29,7 +29,7 @@ wget https://github.com/xbc5/aegis/archive/refs/tags/v0.1-alpha.tar.gz -O /tmp/a
 # in the dom0 terminal (keep DispVM terminal open)
 cd /tmp
 mkdir aegis # important
-qvm-run --pass-io [the-dispvm-name] 'cat /tmp/aegis.zip' | tar -xvz -C aegis --strip-components=1
+qvm-run --pass-io [the-dispvm-name] 'cat /tmp/aegis.tar.gz' | tar -xvz -C aegis --strip-components=1
 sudo ./aegis/build install
 
 # copy the installer to VMs
@@ -54,7 +54,7 @@ Now you can run `aegis -h` in `dom0`
 
 ### What This Script Does
 
-It will `install` the appropriate files and dependencies into that qube:
+It will `install` the appropriate files and dependencies into that domain:
 - `TemplateVM`: system deps, and service;
 - `tun-t`: the script, firewall rules, and it will create the config directory;
 - `dom0`: create the qubes (if you agree), install the script, and environment variables.
